@@ -53,7 +53,7 @@ class Player {
                             explorer = new Explorer(id, x, y, param0, param2);
                             explorers.put(id, explorer);
                         }
-                        if (id == 0) {
+                        if (i == 0) {
                             myHero = explorer;
                         }
                         break;
@@ -165,31 +165,30 @@ class Player {
             Double closestExplorerDistance = closestExplorer == null ? Double.MAX_VALUE : closestExplorer.getDistanceFrom(this);
             Double closestWandererDistance = this.getClosestChaserDistance(wanderers);
             boolean isChased = (!this.chasedBy.isEmpty() && closestWandererDistance < 5.0) ||
-                (closestWandererDistance < 5.0 && closestExplorerDistance >= 2.0) ||
-                (closestWandererDistance < 2);
+                (closestWandererDistance < 30.0 && closestExplorerDistance >= 2.0) ||
+                (closestWandererDistance < 5);
 
             //If a wandered is chasing the explorer or if one is close
             if (isChased) {
                 System.err.println("Escaping");
-                double initialScore = this.getPositionScore(wanderers);
 
                 List<Explorer> possibleMoves = this.nextPossibleMoves();
-
+                possibleMoves.add(this);
                 Explorer bestPossibility = possibleMoves.stream()
                     .filter(explorer -> {//Remove in walls possibilities
                         int x = explorer.getX();
                         int y = explorer.getY();
                         String place = String.valueOf(maze[y][x]);
 //                            System.err.println(MessageFormat.format("for x: {0} y: {1} place is: {2}", x, y, place));
+                        System.err.println(MessageFormat.format("for x: {0} y: {1} score is: {2}", x, y, explorer.getPositionScore(wanderers)));
                         return !place.equalsIgnoreCase("#");
                     })
                     .max(Comparator.comparing(explorer -> explorer.getPositionScore(wanderers)))
                     .orElse(this);
                 double bestScore = bestPossibility.getPositionScore(wanderers);
-                if (bestPossibility.isSamePosition(this) ||
-                    bestScore < initialScore) {
+                if (bestPossibility.isSamePosition(this)) {
                     if (this.getRemainingLights() == 0) {
-                        return "WAIT no solution found";
+                        return "WAIT no solution found I don't have lights anymore";
                     }
                     //No escape possible
                     long wanderersInRangeOfLight = wanderers.values().stream()
@@ -197,6 +196,7 @@ class Player {
                         .count();
 
                     if (wanderersInRangeOfLight > 0) {
+                        this.setRemainingLights(this.getRemainingLights() - 1);
                         return "LIGHT";
                     }
                 } else {
@@ -206,12 +206,14 @@ class Player {
                 System.err.println("looking for a buddy");
 
                 List<Explorer> possibleMoves = this.nextPossibleMoves();
+                possibleMoves.add(this);
                 Explorer bestPossibility = possibleMoves.stream()
                     .filter(explorer -> {//Remove in walls possibilities
                         int x = explorer.getX();
                         int y = explorer.getY();
                         String place = String.valueOf(maze[y][x]);
 //                            System.err.println(MessageFormat.format("for x: {0} y: {1} place is: {2}", x, y, place));
+                        System.err.println(MessageFormat.format("for x: {0} y: {1} score is: {2}", x, y, explorer.getPositionScore(wanderers)));
                         return !place.equalsIgnoreCase("#");
                     })
                     .min(Comparator.comparing(explorer -> explorer.getDistanceFrom(closestExplorer)))
@@ -230,8 +232,15 @@ class Player {
 
 
         public Double getPositionScore(Map<Integer, Wanderer> wanderers) {
-            //We add a weight on the distance to chasers as it is more important to escape
-            return 100 * this.getDistanceFromChasers(wanderers) + this.getDistanceFromWanderers(wanderers);
+            double chasersDistance = this.getWeightedDistanceFromChasers(wanderers);
+            double otherWanderersDistance = this.getWeightedDistanceFromWanderers(wanderers);
+
+            double closestMalus = this.getClosestChaserDistance(wanderers) < 4 ? 500 : 0;
+
+            double score = chasersDistance + otherWanderersDistance;
+            score -= closestMalus;
+//            System.err.println("Score is " + score);
+            return score;
         }
 
         public Double getDistanceFromWanderers(Map<Integer, Wanderer> wanderers) {
@@ -244,10 +253,53 @@ class Player {
             return distance;
         }
 
+        public Double getWeightedDistanceFromWanderers(Map<Integer, Wanderer> wanderers) {
+            Double distance = wanderers.values().stream()
+                .filter(wanderer -> wanderer.getTarget() != this.getId())
+                .map((wanderer) -> wanderer.getDistanceFrom(this))
+                .map(aDouble -> {
+                    double coeffOtherWanderer = 10;
+                    if (aDouble < 5) {
+                        coeffOtherWanderer = 0.001;
+                    } else if (aDouble < 10) {
+                        coeffOtherWanderer = 0.01;
+                    } else if (aDouble < 20) {
+                        coeffOtherWanderer = 1;
+                    }
+
+                    return coeffOtherWanderer * aDouble;
+                })
+                .reduce(Double::sum).orElse(0.0);
+
+//            System.err.println(MessageFormat.format("for x: {0} y: {1} distance from wanderer is: {2}", this.getX(), this.getY(), distance));
+            return distance;
+        }
+
         public Double getDistanceFromChasers(Map<Integer, Wanderer> wanderers) {
             Double distance = this.getChasedBy().stream()
                 .map(wanderers::get)
                 .map((wanderer) -> wanderer.getDistanceFrom(this))
+                .reduce(Double::sum).orElse(0.0);
+
+//            System.err.println(MessageFormat.format("for x: {0} y: {1} distance from chasers is: {2}", this.getX(), this.getY(), distance));
+            return distance;
+        }
+
+        public Double getWeightedDistanceFromChasers(Map<Integer, Wanderer> wanderers) {
+            Double distance = this.getChasedBy().stream()
+                .map(wanderers::get)
+                .map((wanderer) -> wanderer.getDistanceFrom(this))
+                .map(aDouble -> {
+                    double coeffChaser = 10;
+                    if (aDouble < 5) {
+                        coeffChaser = 0.001;
+                    } else if (aDouble < 10) {
+                        coeffChaser = 0.01;
+                    } else if (aDouble < 20) {
+                        coeffChaser = 1;
+                    }
+                    return coeffChaser * aDouble;
+                })
                 .reduce(Double::sum).orElse(0.0);
 
 //            System.err.println(MessageFormat.format("for x: {0} y: {1} distance from chasers is: {2}", this.getX(), this.getY(), distance));
